@@ -1,0 +1,117 @@
+import os
+import cv2
+import torch
+import kagglehub
+import numpy as np
+import pandas as pd
+import supervision as sv
+from ultralytics import YOLO, SAM
+from tqdm import tqdm
+
+# 1. DOWNLOAD DATASET
+print("Downloading Kaggle dataset...")
+dataset_path = kagglehub.dataset_download("umuttuygurr/videosdog")
+
+# -------- CONFIG --------
+OUTPUT_FOLDER = "/content/drive/MyDrive/Stray_Behavior_Project"
+CONFIDENCE = 0.4
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+FRAME_STRIDE = 2  # Process SAM every 2nd frame to double the speed
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+# ------------------------
+
+# 2. LOAD MODELS (Optimized for GPU)
+print(f"Loading Models on {DEVICE}...")
+yolo_model = YOLO("yolo11n.pt").to(DEVICE)
+sam_model = SAM("sam2.1_l.pt").to(DEVICE)
+
+# Data storage for CSV
+csv_logs = []
+
+def get_behavior(mask):
+    """Analyze morphology of the SAM mask to determine posture."""
+    y, x = np.where(mask)
+    if len(x) == 0: return "Unknown"
+    height = np.max(y) - np.min(y)
+    width = np.max(x) - np.min(x)
+    ratio = height / width if width > 0 else 0
+    
+    if ratio > 1.7: return "Jumping/Standing"
+    if ratio < 0.5: return "Lying/Lunging"
+    return "Normal/Alert"
+
+def process_video(video_path, output_path, filename):
+    cap = cv2.VideoCapture(video_path)
+    w, h = int(cap.get(3)), int(cap.get(4))
+    fps, total_frames = int(cap.get(5)), int(cap.get(7))
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+
+    # Professional Annotators
+    # MaskAnnotator creates the colored SAM fill
+    mask_annotator = sv.MaskAnnotator(opacity=0.4, color_lookup=sv.ColorLookup.INDEX)
+    box_annotator = sv.BoxAnnotator(color_lookup=sv.ColorLookup.INDEX)
+    label_annotator = sv.LabelAnnotator(text_scale=0.6, text_thickness=2)
+
+    frame_count = 0
+    detections = None
+    labels = []
+
+    for _ in tqdm(range(total_frames), desc=f"Processing {filename}", leave=False):
+        ret, frame = cap.read()
+        if not ret: break
+
+        # Step 1: YOLO Detection (Every frame for smoothness)
+        if frame_count % FRAME_STRIDE == 0:
+            yolo_results = yolo_model.predict(frame, conf=CONFIDENCE, classes=[16], device=DEVICE, verbose=False, half=True)[0]
+            
+            if len(yolo_results.boxes) > 0:
+                # Step 2: SAM Segmentation (The "Magic" part)
+                bboxes = yolo_results.boxes.xyxy.tolist()
+                sam_results = sam_model.predict(frame, bboxes=bboxes, device=DEVICE, verbose=False)[0]
+                
+                # Create Supervision Detections including masks
+                detections = sv.Detections.from_ultralytics(sam_results)
+                
+                # Step 3: Behavioral Analysis
+                labels = []
+                for i in range(len(detections.mask)):
+                    behavior = get_behavior(detections.mask[i])
+                    labels.append(f"Dog: {behavior}")
+                    # Log for CSV
+                    csv_logs.append({
+                        "Video": filename,
+                        "Frame": frame_count,
+                        "Behavior": behavior,
+                        "Confidence": detections.confidence[i]
+                    })
+
+        # Step 4: Layered Visualization
+        if detections is not None:
+            # Mask first (bottom layer), then Box, then Label (top layer)
+            frame = mask_annotator.annotate(scene=frame, detections=detections)
+            frame = box_annotator.annotate(scene=frame, detections=detections)
+            frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
+
+        out.write(frame)
+        frame_count += 1
+
+    cap.release()
+    out.release()
+
+# 3. RUN BATCH PROCESSING
+print("🎬 Starting Pipeline...")
+for root, _, files in os.walk(dataset_path):
+    for f in files:
+        if f.lower().endswith((".mp4", ".avi", ".mov")):
+            input_vid = os.path.join(root, f)
+            output_vid = os.path.join(OUTPUT_FOLDER, f"SAM_Analyzed_{f}")
+            process_video(input_vid, output_vid, f)
+
+# 4. EXPORT CSV REPORT
+df = pd.DataFrame(csv_logs)
+if not df.empty:
+    csv_out = os.path.join(OUTPUT_FOLDER, "stray_dog_behavior_report.csv")
+    df.to_csv(csv_out, index=False)
+    print(f"✅ Analysis Report Saved: {csv_out}")
+
+print("🎯 Mission Accomplished.")
