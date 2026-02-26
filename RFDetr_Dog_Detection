@@ -1,0 +1,64 @@
+import os
+import supervision as sv
+from inference import get_model
+from PIL import Image
+
+# -------- CONFIG --------
+INPUT_FOLDER = "/content/drive/MyDrive/Stray_Detection_Project_Submission_FIle/train/images"
+OUTPUT_FOLDER_BASE = "/content/drive/MyDrive/output_rfdetr_base"
+OUTPUT_FOLDER_LARGE = "/content/drive/MyDrive/output_rfdetr_large"
+CONFIDENCE = 0.5
+# ------------------------
+
+os.makedirs(OUTPUT_FOLDER_BASE, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER_LARGE, exist_ok=True)
+
+print("Loading models...")
+model_base = get_model("rfdetr-base")
+model_large = get_model("rfdetr-large")
+print("Models loaded successfully.")
+
+valid_ext = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+for filename in os.listdir(INPUT_FOLDER):
+
+    if not filename.lower().endswith(valid_ext):
+        continue
+
+    image_path = os.path.join(INPUT_FOLDER, filename)
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+
+        # ---------- BASE ----------
+        pred_base = model_base.infer(image, confidence=CONFIDENCE)[0]
+        det_base = sv.Detections.from_inference(pred_base)
+        labels_base = [p.class_name for p in pred_base.predictions]
+
+        annotated_base = image.copy()
+        annotated_base = sv.BoxAnnotator().annotate(annotated_base, det_base)
+        annotated_base = sv.LabelAnnotator().annotate(
+            annotated_base, det_base, labels_base
+        )
+
+        annotated_base.save(os.path.join(OUTPUT_FOLDER_BASE, filename))
+
+        # ---------- LARGE ----------
+        pred_large = model_large.infer(image, confidence=CONFIDENCE)[0]
+        det_large = sv.Detections.from_inference(pred_large)
+        labels_large = [p.class_name for p in pred_large.predictions]
+
+        annotated_large = image.copy()
+        annotated_large = sv.BoxAnnotator().annotate(annotated_large, det_large)
+        annotated_large = sv.LabelAnnotator().annotate(
+            annotated_large, det_large, labels_large
+        )
+
+        annotated_large.save(os.path.join(OUTPUT_FOLDER_LARGE, filename))
+
+        print(f"✅ Processed: {filename}")
+
+    except Exception as e:
+        print(f"❌ Error with {filename}: {e}")
+
+print("🎯 All images processed.")
