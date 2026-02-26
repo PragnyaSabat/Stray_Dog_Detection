@@ -1,5 +1,5 @@
 # Stray_Dog_Detection
-## Advanced CV pipeline using YOLO11 and SAM 2.1 to detect stray dogs and analyze behavioral postures in real-time. Features a custom morphological engine that classifies activities (Jumping, Lunging, Standing) from high-fidelity segmentation masks. Generates automated CSV reports for large-scale urban population monitoring.
+## CanineSight: SOTA Behavioral Analytics Pipeline
 ---
 
 ## 1. My Vision: The Problem & The Solution
@@ -42,6 +42,3 @@
 
 "Moving forward, I plan to deploy this on a **Raspberry Pi 5** using a 'Light' version of my pipeline. I am also working on 'Temporal Behavior Analysis,' where the system will analyze a sequence of 10-15 frames to detect more complex actions like digging or tail-wagging patterns."
 
----
-
-**Would you like me to help you draft a LinkedIn post using this first-person style to showcase your project to recruiters?**
